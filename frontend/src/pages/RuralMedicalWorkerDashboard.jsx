@@ -16,7 +16,7 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Check if browser supports speech recognition
+// Speech recognition support check
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 const isSpeechRecognitionSupported = !!SpeechRecognition
 
@@ -29,6 +29,8 @@ export default function RuralMedicalWorkerDashboard() {
   const [consultations, setConsultations] = useState([])
   const [isRecording, setIsRecording] = useState(false)
   const [voiceText, setVoiceText] = useState('')
+  const [voiceStatus, setVoiceStatus] = useState('')
+  const recognitionRef = useRef(null)
   const [aiResult, setAiResult] = useState(null)
   const [showAiResultModal, setShowAiResultModal] = useState(false)
   const [speechError, setSpeechError] = useState('')
@@ -156,27 +158,29 @@ export default function RuralMedicalWorkerDashboard() {
 
   // Start Voice Recording using Web Speech API
   const startVoiceRecording = () => {
-    // Check if browser supports speech recognition
     if (!isSpeechRecognitionSupported) {
-      setSpeechError('Your browser does not support voice input, please type manually')
+      setSpeechError('Voice recording not supported in this browser. Please use Chrome.')
       return
     }
-
+    
+    setSpeechError('')
+    setVoiceStatus('')
+    
     try {
-      // Initialize speech recognition
       const recognition = new SpeechRecognition()
-      recognitionRef.current = recognition
-
-      // Set language to Bengali (Bangla)
-      recognition.lang = 'bn-BD'
       recognition.continuous = true
       recognition.interimResults = true
-
-      // Handle recognition results
+      recognition.lang = 'bn-BD' // Bangla
+      
+      recognition.onstart = () => {
+        setIsRecording(true)
+        setVoiceStatus('🟢 Recording... speak now!')
+      }
+      
       recognition.onresult = (event) => {
-        let interimTranscript = ''
         let finalTranscript = ''
-
+        let interimTranscript = ''
+        
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript
           if (event.results[i].isFinal) {
@@ -185,39 +189,38 @@ export default function RuralMedicalWorkerDashboard() {
             interimTranscript += transcript
           }
         }
-
-        // Update voice text with final results
+        
         if (finalTranscript) {
-          setVoiceText((prev) => prev + finalTranscript)
+          setVoiceText(prev => prev + finalTranscript)
+        }
+        if (interimTranscript) {
+          setVoiceStatus('🎤 ' + interimTranscript)
         }
       }
-
-      // Handle errors
+      
       recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error)
-        if (event.error === 'not-allowed') {
-          setSpeechError('Microphone access denied. Please allow microphone permissions.')
-        } else if (event.error === 'no-speech') {
-          setSpeechError('No speech detected. Please try again.')
-        } else {
-          setSpeechError(`Speech recognition error: ${event.error}`)
-        }
         setIsRecording(false)
+        if (event.error === 'not-allowed') {
+          setSpeechError('মাইক্রোফোন অনুমতি দিন — address bar এর 🔒 আইকনে ক্লিক করুন → Microphone → Allow')
+        } else if (event.error === 'network') {
+          setSpeechError('Network error. Please check your internet connection.')
+        } else {
+          setSpeechError(`Error: ${event.error}`)
+        }
       }
-
-      // Handle end of recognition
+      
       recognition.onend = () => {
         setIsRecording(false)
+        setVoiceStatus('✅ Recording stopped')
       }
-
-      // Start recognition
+      
+      recognitionRef.current = recognition
       recognition.start()
-      setIsRecording(true)
-      setSpeechError('')
-
-    } catch (error) {
-      console.error('Error starting speech recognition:', error)
-      setSpeechError('Failed to start voice recording. Please try again.')
+      
+    } catch (err) {
+      console.error('Speech recognition init error:', err)
+      setSpeechError(`Error: ${err.message}`)
     }
   }
 
@@ -633,32 +636,31 @@ export default function RuralMedicalWorkerDashboard() {
                 {/* Symptom Input */}
                 <div>
                   <label className="block text-gray-700 font-semibold mb-2">Symptoms (Voice or Text)</label>
-                  
-                  {/* Show error if browser doesn't support speech recognition */}
-                  {!isSpeechRecognitionSupported && (
-                    <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-700">
-                      ⚠️ Your browser does not support voice input, please type manually
+
+                  {/* Voice status */}
+                  {voiceStatus && (
+                    <div className={`mb-2 p-2 rounded text-sm flex items-center gap-2 ${
+                      voiceStatus.startsWith('✅') ? 'bg-green-50 border border-green-200 text-green-800' :
+                      voiceStatus.startsWith('⚠️') ? 'bg-yellow-50 border border-yellow-200 text-yellow-800' :
+                      'bg-blue-50 border border-blue-200 text-blue-800'
+                    }`}>
+                      {voiceStatus}
                     </div>
                   )}
-                  
-                  {/* Show speech error if any */}
+
+                  {/* Speech error */}
                   {speechError && (
                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
                       ⚠️ {speechError}
                     </div>
                   )}
-                  
-                  <div className="flex gap-2 mb-4">
+
+                  <div className="flex gap-2 mb-4 items-center">
                     {!isRecording ? (
                       <button
                         type="button"
                         onClick={startVoiceRecording}
-                        disabled={!isSpeechRecognitionSupported}
-                        className={`px-4 py-2 rounded-lg transition duration-300 flex items-center gap-2 ${
-                          isSpeechRecognitionSupported 
-                            ? 'bg-blue-600 text-white hover:bg-blue-700' 
-                            : 'bg-gray-400 text-gray-200 cursor-not-allowed'
-                        }`}
+                        className="px-4 py-2 rounded-lg transition duration-300 flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700"
                       >
                         🎤 Start Voice Recording
                       </button>
@@ -671,8 +673,10 @@ export default function RuralMedicalWorkerDashboard() {
                         ⏹️ Stop Recording
                       </button>
                     )}
-                    <span className="text-sm text-gray-600 self-center">
-                      {isRecording ? '🎙️ Listening... Speak in Bangla now!' : 'Click to record symptoms in Bangla'}
+                    <span className="text-sm text-gray-500">
+                      {isRecording
+                        ? '🔴 রেকর্ডিং চলছে... বাংলায় বলুন, শেষ হলে Stop চাপুন'
+                        : 'ক্লিক করুন → বাংলায় লক্ষণ বলুন → Stop চাপুন → AI স্বয়ংক্রিয়ভাবে লিখবে'}
                     </span>
                   </div>
 
