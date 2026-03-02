@@ -32,11 +32,30 @@ export default function RuralMedicalWorkerDashboard() {
   const [aiResult, setAiResult] = useState(null)
   const [showAiResultModal, setShowAiResultModal] = useState(false)
   const [speechError, setSpeechError] = useState('')
-  
-  // Speech recognition ref
-  const recognitionRef = useRef(null)
+  const [uploadedFile, setUploadedFile] = useState(null)
+  const [uploadedFilePreview, setUploadedFilePreview] = useState(null)
+  const fileInputRef = useRef(null)
 
-  // Load patients and consultations on component mount
+  // Handle document/image file selection
+  const handleFileChange = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setUploadedFile(file)
+    // Generate preview for images
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = (ev) => setUploadedFilePreview(ev.target.result)
+      reader.readAsDataURL(file)
+    } else {
+      setUploadedFilePreview(null) // PDF — no preview
+    }
+  }
+
+  const removeUploadedFile = () => {
+    setUploadedFile(null)
+    setUploadedFilePreview(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
   useEffect(() => {
     loadPatients()
     loadConsultations()
@@ -108,24 +127,31 @@ export default function RuralMedicalWorkerDashboard() {
   }
 
   // Handle Patient Registration Form
-  const handlePatientSubmit = (e) => {
+  const handlePatientSubmit = async (e) => {
     e.preventDefault()
     const formData = new FormData(e.target)
-    const newPatient = {
-      id: `P-${Date.now()}`,
-      name: formData.get('patientName'),
-      age: formData.get('age'),
-      gender: formData.get('gender'),
-      contact: formData.get('contact'),
-      identificationType: formData.get('identificationType'),
-      identificationId: formData.get('identificationId'),
-      registeredDate: new Date().toLocaleDateString(),
+    
+    try {
+      const response = await api.post('/auth/patient/register', {
+        name: formData.get('patientName'),
+        age: parseInt(formData.get('age')),
+        gender: formData.get('gender'),
+        contact: formData.get('contact'),
+        identificationType: formData.get('identificationType'),
+        identificationId: formData.get('identificationId'),
+        registeredBy: user?.id || user?._id
+      })
+
+      const newPatient = response.data.patient
+      const tempPassword = response.data.credentials?.password || formData.get('identificationId')
+      alert(`Patient ${newPatient.name} registered successfully!\nPatient ID: ${newPatient.patientId}\nTemporary Password: ${tempPassword}`)
+      setShowPatientModal(false)
+      e.target.reset()
+      await loadPatients()
+      setActiveTab('patients')
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error registering patient')
     }
-    setPatients([...patients, newPatient])
-    setShowPatientModal(false)
-    e.target.reset()
-    alert(`Patient ${newPatient.name} registered successfully!\nPatient ID: ${newPatient.id}\nTemporary Password: ${Math.random().toString(36).substring(2, 10).toUpperCase()}`)
-    setActiveTab('patients')
   }
 
   // Start Voice Recording using Web Speech API
@@ -204,8 +230,8 @@ export default function RuralMedicalWorkerDashboard() {
     setIsRecording(false)
   }
 
-  // Handle Consultation Submission
-  const handleConsultationSubmit = (e) => {
+  // Handle Consultation Submission with AI Diagnosis
+  const handleConsultationSubmit = async (e) => {
     e.preventDefault()
     const formData = new FormData(e.target)
     
@@ -217,24 +243,54 @@ export default function RuralMedicalWorkerDashboard() {
       return
     }
 
-    const consultation = {
-      id: `C-${Date.now()}`,
-      patientId: selectedPatientId,
-      patientName: selectedPatient.name,
-      date: formData.get('consultationDate'),
-      symptoms: formData.get('symptoms') || voiceText,
-      temperature: formData.get('temperature'),
-      bloodPressure: formData.get('bloodPressure'),
-      otherVitals: formData.get('otherVitals'),
-      recordedAt: new Date().toLocaleString(),
-      status: 'Pending Review',
+    const symptomsText = formData.get('symptoms') || voiceText
+    if (!symptomsText.trim() && !uploadedFile) {
+      alert('Please enter symptoms or upload a document')
+      return
     }
 
-    setConsultations([...consultations, consultation])
-    alert(`Consultation recorded for ${selectedPatient.name}!\nConsultation ID: ${consultation.id}`)
-    e.target.reset()
-    setVoiceText('')
-    setActiveTab('patients')
+    // Parse blood pressure
+    const bpStr = formData.get('bloodPressure') || ''
+    let systolic = null, diastolic = null
+    if (bpStr.includes('/')) {
+      const [sys, dia] = bpStr.split('/')
+      systolic = parseInt(sys)
+      diastolic = parseInt(dia)
+    }
+
+    try {
+      // Build multipart FormData for file + text fields
+      const submitData = new FormData()
+      submitData.append('patientId', selectedPatientId)
+      submitData.append('symptoms', symptomsText)
+      if (formData.get('temperature')) submitData.append('temperature', formData.get('temperature'))
+      if (systolic) {
+        submitData.append('bloodPressureSystolic', systolic)
+        submitData.append('bloodPressureDiastolic', diastolic)
+      }
+      if (formData.get('otherVitals')) submitData.append('otherVitals', formData.get('otherVitals'))
+      submitData.append('voiceInputText', voiceText || '')
+      if (formData.get('consultationDate')) submitData.append('consultationDate', formData.get('consultationDate'))
+      if (uploadedFile) submitData.append('document', uploadedFile)
+
+      const response = await api.post('/consultations', submitData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+
+      const result = response.data.consultation
+      setAiResult(result)
+      setShowAiResultModal(true)
+
+      // Refresh data
+      await loadConsultations()
+      await loadPatients()
+      
+      e.target.reset()
+      setVoiceText('')
+      removeUploadedFile()
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error creating consultation')
+    }
   }
 
   // Count today's consultations
@@ -667,6 +723,80 @@ export default function RuralMedicalWorkerDashboard() {
                   </div>
                 </div>
 
+                {/* Document Upload Section */}
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-2">
+                    📄 ডকুমেন্ট/ছবি আপলোড (ঐচ্ছিক)
+                  </label>
+                  <p className="text-sm text-gray-500 mb-2">
+                    মেডিকেল রিপোর্ট, ক্ষতের ছবি, প্রেসক্রিপশন, X-Ray, বা যেকোনো ডকুমেন্ট আপলোড করুন — AI দেখে রোগ নির্ণয় করবে
+                  </p>
+
+                  {/* File Drop Zone */}
+                  <div
+                    className="border-2 border-dashed border-blue-300 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      const file = e.dataTransfer.files[0]
+                      if (file) {
+                        setUploadedFile(file)
+                        if (file.type.startsWith('image/')) {
+                          const reader = new FileReader()
+                          reader.onload = (ev) => setUploadedFilePreview(ev.target.result)
+                          reader.readAsDataURL(file)
+                        } else {
+                          setUploadedFilePreview(null)
+                        }
+                      }
+                    }}
+                  >
+                    {!uploadedFile ? (
+                      <>
+                        <div className="text-4xl mb-2">📷</div>
+                        <p className="text-gray-600 font-medium">ছবি/ডকুমেন্ট ড্র্যাগ করুন অথবা ক্লিক করুন</p>
+                        <p className="text-sm text-gray-400 mt-1">JPEG, PNG, GIF, WebP, PDF সাপোর্ট হাবে র্যা • সর্বোচ্চ 10MB</p>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {uploadedFilePreview ? (
+                            <img
+                              src={uploadedFilePreview}
+                              alt="Preview"
+                              className="w-16 h-16 object-cover rounded-lg border border-gray-200"
+                            />
+                          ) : (
+                            <div className="w-16 h-16 bg-red-100 rounded-lg flex items-center justify-center text-2xl">📄</div>
+                          )}
+                          <div className="text-left">
+                            <p className="font-medium text-gray-800 text-sm">{uploadedFile.name}</p>
+                            <p className="text-xs text-gray-500">{(uploadedFile.size / 1024).toFixed(1)} KB • {uploadedFile.type}</p>
+                            <p className="text-xs text-green-600 mt-0.5">✅ AI এই ডকুমেন্ট বিশ্লেষণ করবে</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); removeUploadedFile() }}
+                          className="text-red-500 hover:text-red-700 text-xl font-bold px-2"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Hidden file input */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png,image/gif,image/webp,application/pdf"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                </div>
+
                 {/* Submit Buttons */}
                 <div className="flex gap-4 pt-4">
                   <button
@@ -789,6 +919,182 @@ export default function RuralMedicalWorkerDashboard() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* AI Diagnosis Result Modal */}
+      {showAiResultModal && aiResult && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+          <div className={`rounded-lg shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto ${
+            aiResult.riskLevel === 'High' ? 'bg-red-50 border-4 border-red-500' :
+            aiResult.riskLevel === 'Medium' ? 'bg-yellow-50 border-4 border-yellow-500' :
+            'bg-green-50 border-4 border-green-500'
+          }`}>
+            {/* Header */}
+            <div className={`sticky top-0 p-6 flex justify-between items-center border-b-2 ${
+              aiResult.riskLevel === 'High' ? 'bg-red-600 text-white border-red-700' :
+              aiResult.riskLevel === 'Medium' ? 'bg-yellow-500 text-white border-yellow-600' :
+              'bg-green-600 text-white border-green-700'
+            }`}>
+              <div>
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  {aiResult.riskLevel === 'High' && '🚨'}
+                  {aiResult.riskLevel === 'Medium' && '⚠️'}
+                  {aiResult.riskLevel === 'Low' && '✅'}
+                  AI Diagnosis Result
+                </h2>
+                <p className="text-sm mt-1 opacity-90">
+                  Patient: {aiResult.patientName} | ID: {aiResult.consultationId}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowAiResultModal(false)}
+                className="text-white hover:opacity-80 text-3xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Emergency Alert for HIGH */}
+              {aiResult.riskLevel === 'High' && (
+                <div className="bg-red-100 border-2 border-red-400 rounded-lg p-4 animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <span className="text-4xl">🚨</span>
+                    <div>
+                      <h3 className="text-xl font-bold text-red-800">RED ALERT - EMERGENCY</h3>
+                      <p className="text-red-700 font-medium">রোগীকে এখনই হাসপাতালে / Medical Expert এর কাছে নিয়ে যান!</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Medium Alert */}
+              {aiResult.riskLevel === 'Medium' && (
+                <div className="bg-yellow-100 border-2 border-yellow-400 rounded-lg p-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-4xl">⚠️</span>
+                    <div>
+                      <h3 className="text-xl font-bold text-yellow-800">Medical Expert এর পরামর্শ প্রয়োজন</h3>
+                      <p className="text-yellow-700 font-medium">রোগীর তথ্য Medical Expert এর কাছে Forward করা হয়েছে</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Low - All Good */}
+              {aiResult.riskLevel === 'Low' && (
+                <div className="bg-green-100 border-2 border-green-400 rounded-lg p-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-4xl">✅</span>
+                    <div>
+                      <h3 className="text-xl font-bold text-green-800">Low Risk - বাড়িতে চিকিৎসা সম্ভব</h3>
+                      <p className="text-green-700 font-medium">AI এর পরামর্শ অনুযায়ী চিকিৎসা নিন</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Risk Level Badge */}
+              <div className="flex items-center gap-4">
+                <span className={`px-6 py-3 rounded-full text-lg font-bold ${
+                  aiResult.riskLevel === 'High' ? 'bg-red-200 text-red-900' :
+                  aiResult.riskLevel === 'Medium' ? 'bg-yellow-200 text-yellow-900' :
+                  'bg-green-200 text-green-900'
+                }`}>
+                  {aiResult.riskLevel === 'High' ? '🔴' : aiResult.riskLevel === 'Medium' ? '🟡' : '🟢'} {aiResult.riskLevel} Risk
+                </span>
+                {aiResult.detectedDisease && (
+                  <span className="text-lg font-semibold text-gray-800">
+                    রোগ: {aiResult.detectedDisease}
+                  </span>
+                )}
+              </div>
+
+              {/* Disease Description */}
+              {aiResult.diseaseDescription && (
+                <div className="bg-white rounded-lg p-4 border">
+                  <h4 className="font-semibold text-gray-900 mb-1">🔍 রোগ বিবরণ</h4>
+                  <p className="text-gray-700">{aiResult.diseaseDescription}</p>
+                </div>
+              )}
+
+              {/* AI Recommendation */}
+              <div className="bg-white rounded-lg p-4 border">
+                <h4 className="font-semibold text-gray-900 mb-2">🤖 AI পরামর্শ</h4>
+                <p className="text-gray-700 whitespace-pre-line">{aiResult.aiRecommendation}</p>
+              </div>
+
+              {/* Instructions */}
+              {aiResult.aiInstructions && (
+                <div className={`rounded-lg p-4 border ${
+                  aiResult.riskLevel === 'High' ? 'bg-red-100 border-red-300' :
+                  aiResult.riskLevel === 'Medium' ? 'bg-yellow-100 border-yellow-300' :
+                  'bg-blue-50 border-blue-200'
+                }`}>
+                  <h4 className="font-semibold text-gray-900 mb-2">📋 নির্দেশনা</h4>
+                  <p className="text-gray-700">{aiResult.aiInstructions}</p>
+                </div>
+              )}
+
+              {/* Suggested Medicines (only for Low/Medium) */}
+              {aiResult.suggestedMedicines && aiResult.suggestedMedicines.length > 0 && (
+                <div className="bg-white rounded-lg p-4 border">
+                  <h4 className="font-semibold text-gray-900 mb-3">💊 প্রস্তাবিত ওষুধ</h4>
+                  <div className="space-y-3">
+                    {aiResult.suggestedMedicines.map((med, index) => (
+                      <div key={index} className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+                        <p className="font-bold text-blue-900">{index + 1}. {med.name}</p>
+                        <div className="grid grid-cols-3 gap-2 mt-1 text-sm text-blue-800">
+                          <p><span className="font-medium">মাত্রা:</span> {med.dosage}</p>
+                          <p><span className="font-medium">সময়:</span> {med.frequency}</p>
+                          <p><span className="font-medium">সময়কাল:</span> {med.duration}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* High Risk - No Medicine Warning */}
+              {aiResult.riskLevel === 'High' && (
+                <div className="bg-red-100 border border-red-300 rounded-lg p-4">
+                  <p className="text-red-800 font-bold text-center text-lg">
+                    ⛔ ডাক্তারের পরামর্শ ছাড়া কোনো ওষুধ দেবেন না!
+                  </p>
+                  <p className="text-red-700 text-center mt-1">
+                    রোগীকে এখনই নিকটস্থ হাসপাতালে নিয়ে যান
+                  </p>
+                </div>
+              )}
+
+              {/* Forward Status */}
+              {aiResult.forwardedToExpert && (
+                <div className="bg-blue-100 border border-blue-300 rounded-lg p-4">
+                  <p className="text-blue-800 font-semibold text-center flex items-center justify-center gap-2">
+                    📤 রোগীর সম্পূর্ণ তথ্য Medical Expert এর কাছে পাঠানো হয়েছে
+                  </p>
+                </div>
+              )}
+
+              {/* Close Button */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => {
+                    setShowAiResultModal(false)
+                    setActiveTab('patients')
+                  }}
+                  className={`flex-1 px-6 py-3 rounded-lg font-bold text-white transition duration-300 ${
+                    aiResult.riskLevel === 'High' ? 'bg-red-600 hover:bg-red-700' :
+                    aiResult.riskLevel === 'Medium' ? 'bg-yellow-600 hover:bg-yellow-700' :
+                    'bg-green-600 hover:bg-green-700'
+                  }`}
+                >
+                  বুঝেছি, বন্ধ করুন
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

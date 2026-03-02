@@ -3,7 +3,7 @@ import { Patient, Consultation } from '../models/index.js'
 // Get patients registered by the current user (RMW)
 export const getPatientsByUser = async (req, res) => {
   try {
-    const userId = req.user.id
+    const userId = req.user.userId || req.user.id
 
     // Find patients registered by this user
     const patients = await Patient.find({ registeredBy: userId }).select('-password')

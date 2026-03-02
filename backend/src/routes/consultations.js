@@ -8,6 +8,7 @@ import {
   getMyConsultations
 } from '../controllers/consultationController.js'
 import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
+import upload from '../middleware/upload.js'
 
 const router = express.Router()
 
@@ -15,8 +16,8 @@ const router = express.Router()
 router.use(authMiddleware)
 
 // 1. Create Consultation - POST /api/consultations
-// Only rural-medical-worker can create
-router.post('/', roleMiddleware(['rural-medical-worker']), createConsultation)
+// Accepts optional file upload (field name: 'document')
+router.post('/', roleMiddleware(['rural-medical-worker']), upload.single('document'), createConsultation)
 
 // 2. Get Consultations by Patient - GET /api/consultations/patient/:patientId
 router.get('/patient/:patientId', getConsultationsByPatient)

@@ -57,7 +57,15 @@ export default function PatientDashboard() {
         status: c.status,
         expertReview: c.expertReview,
         medications: c.medications || [],
-        followUpInstructions: c.followUpInstructions || ''
+        followUpInstructions: c.followUpInstructions || '',
+        // AI Diagnosis fields
+        detectedDisease: c.detectedDisease || '',
+        diseaseDescription: c.diseaseDescription || '',
+        suggestedMedicines: c.suggestedMedicines || [],
+        aiInstructions: c.aiInstructions || '',
+        isEmergency: c.isEmergency || false,
+        forwardedToExpert: c.forwardedToExpert || false,
+        aiRecommendation: c.aiRecommendation || ''
       })))
 
       // Set patient data from response
@@ -147,6 +155,24 @@ export default function PatientDashboard() {
               <p className="text-gray-600">Patient ID: {user?.patientId || 'N/A'}</p>
             </div>
 
+            {/* Emergency Alert Banner */}
+            {latestConsultation && latestConsultation.isEmergency && (
+              <div className="col-span-full bg-red-600 text-white rounded-lg shadow p-6 animate-pulse">
+                <div className="flex items-center gap-3">
+                  <span className="text-3xl">🚨</span>
+                  <div>
+                    <h2 className="text-xl font-bold">জরুরি সতর্কতা / Emergency Alert!</h2>
+                    <p className="text-red-100 mt-1">
+                      আপনার স্বাস্থ্য পরিস্থিতি গুরুতর। অনুগ্রহ করে এখনই নিকটস্থ হাসপাতালে যান অথবা Medical Expert-এর সাথে যোগাযোগ করুন।
+                    </p>
+                    <p className="text-red-100 mt-1">
+                      Your health condition requires urgent attention. Please visit the nearest hospital or contact a Medical Expert immediately.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Personal Details Card */}
             <div className="bg-white rounded-lg shadow p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">📋 Personal Details</h3>
@@ -158,7 +184,7 @@ export default function PatientDashboard() {
               </div>
             </div>
 
-            {/* Health Status Card */}
+            {/* Health Status Card - Enhanced with AI Diagnosis */}
             <div className={`rounded-lg shadow p-6 ${riskStyle ? riskStyle.bg : 'bg-white'}`}>
               <h3 className="text-lg font-semibold text-gray-900 mb-4">❤️ Health Status</h3>
               {latestConsultation ? (
@@ -169,10 +195,34 @@ export default function PatientDashboard() {
                   <p className={`mt-2 text-sm font-medium ${riskStyle.text}`}>
                     {riskStyle.message}
                   </p>
+
+                  {/* AI Detected Disease */}
+                  {latestConsultation.detectedDisease && (
+                    <div className="mt-3 p-3 bg-white bg-opacity-60 rounded-lg">
+                      <p className="text-sm font-semibold text-gray-800">
+                        🔍 AI সনাক্ত রোগ: <span className="text-indigo-700">{latestConsultation.detectedDisease}</span>
+                      </p>
+                      {latestConsultation.diseaseDescription && (
+                        <p className="text-xs text-gray-600 mt-1">{latestConsultation.diseaseDescription}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Forwarded to Expert Notice */}
+                  {latestConsultation.forwardedToExpert && (
+                    <div className="mt-2 p-2 bg-yellow-50 border border-yellow-300 rounded">
+                      <p className="text-xs text-yellow-800">
+                        👨‍⚕️ আপনার কেস Medical Expert-এর কাছে পাঠানো হয়েছে
+                      </p>
+                    </div>
+                  )}
+
                   {latestConsultation.expertReview && (
-                    <p className="mt-2 text-sm text-gray-600">
-                      Latest review: {latestConsultation.expertReview.substring(0, 100)}...
-                    </p>
+                    <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded">
+                      <p className="text-xs text-blue-800">
+                        ✅ Expert Review: {latestConsultation.expertReview.substring(0, 150)}...
+                      </p>
+                    </div>
                   )}
                 </div>
               ) : (
@@ -180,9 +230,38 @@ export default function PatientDashboard() {
               )}
             </div>
 
-            {/* Medications Card */}
+            {/* AI Suggested Medicines Card */}
             <div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">💊 Medications</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">🤖 AI পরামর্শিত ওষুধ</h3>
+              {latestConsultation && latestConsultation.suggestedMedicines && latestConsultation.suggestedMedicines.length > 0 ? (
+                <ul className="space-y-3">
+                  {latestConsultation.suggestedMedicines.map((med, index) => (
+                    <li key={index} className="text-sm border-b pb-2 last:border-0">
+                      <div className="flex items-start gap-2">
+                        <span className="text-green-500 mt-0.5">💊</span>
+                        <div>
+                          <span className="font-semibold text-gray-800">{med.name}</span>
+                          {med.dosage && <p className="text-gray-500 text-xs">মাত্রা: {med.dosage}</p>}
+                          {med.frequency && <p className="text-gray-500 text-xs">সময়সূচী: {med.frequency}</p>}
+                          {med.duration && <p className="text-gray-500 text-xs">সময়কাল: {med.duration}</p>}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : latestConsultation?.isEmergency ? (
+                <div className="p-3 bg-red-50 border border-red-200 rounded">
+                  <p className="text-red-700 text-sm font-medium">⚠️ জরুরি অবস্থা — ওষুধ নিজে থেকে নেবেন না!</p>
+                  <p className="text-red-600 text-xs mt-1">Doctor-এর পরামর্শ ছাড়া কোনো ওষুধ খাবেন না। এখনই হাসপাতালে যান।</p>
+                </div>
+              ) : (
+                <p className="text-gray-600 text-sm">কোনো ওষুধ পরামর্শ করা হয়নি</p>
+              )}
+            </div>
+
+            {/* Expert Prescribed Medications Card */}
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">💊 Expert নির্ধারিত ওষুধ</h3>
               {latestConsultation && latestConsultation.medications && latestConsultation.medications.length > 0 ? (
                 <ul className="space-y-2">
                   {latestConsultation.medications.map((med, index) => (
@@ -194,17 +273,27 @@ export default function PatientDashboard() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-gray-600 text-sm">No prescribed medications</p>
+                <p className="text-gray-600 text-sm">Expert এখনও ওষুধ দেননি</p>
               )}
             </div>
 
-            {/* Follow-up Instructions Card */}
+            {/* AI Instructions Card */}
             <div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">📝 Follow-up Instructions</h3>
-              {latestConsultation && latestConsultation.followUpInstructions ? (
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">📝 AI নির্দেশনা</h3>
+              {latestConsultation && latestConsultation.aiInstructions ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-gray-700 whitespace-pre-line">{latestConsultation.aiInstructions}</p>
+                  {latestConsultation.aiRecommendation && (
+                    <div className="mt-2 p-2 bg-blue-50 rounded">
+                      <p className="text-xs text-blue-800 font-medium">AI পরামর্শ:</p>
+                      <p className="text-xs text-blue-700">{latestConsultation.aiRecommendation}</p>
+                    </div>
+                  )}
+                </div>
+              ) : latestConsultation?.followUpInstructions ? (
                 <p className="text-sm text-gray-700">{latestConsultation.followUpInstructions}</p>
               ) : (
-                <p className="text-gray-600 text-sm">No pending follow-ups</p>
+                <p className="text-gray-600 text-sm">কোনো নির্দেশনা নেই</p>
               )}
             </div>
 
@@ -225,6 +314,9 @@ export default function PatientDashboard() {
                           Symptoms
                         </th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                          AI সনাক্ত রোগ
+                        </th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
                           Risk Level
                         </th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
@@ -236,12 +328,21 @@ export default function PatientDashboard() {
                       {consultations.slice(0, 5).map((consultation) => {
                         const style = getRiskLevelStyle(consultation.riskLevel)
                         return (
-                          <tr key={consultation.id} className="hover:bg-gray-50">
+                          <tr key={consultation.id} className={`hover:bg-gray-50 ${consultation.isEmergency ? 'bg-red-50' : ''}`}>
                             <td className="px-4 py-3 text-sm text-gray-900">
                               {consultation.date}
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate" title={consultation.symptoms}>
                               {consultation.symptoms?.substring(0, 50)}...
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              {consultation.detectedDisease ? (
+                                <span className="font-medium text-indigo-700">
+                                  {consultation.isEmergency && '🚨 '}{consultation.detectedDisease}
+                                </span>
+                              ) : (
+                                <span className="text-gray-400">—</span>
+                              )}
                             </td>
                             <td className="px-4 py-3">
                               <span className={`px-2 py-1 rounded-full text-xs font-medium ${style.bg} ${style.text}`}>
@@ -252,6 +353,8 @@ export default function PatientDashboard() {
                               <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                                 consultation.status === 'Reviewed' 
                                   ? 'bg-green-100 text-green-800' 
+                                  : consultation.status === 'Escalated'
+                                  ? 'bg-red-100 text-red-800'
                                   : 'bg-yellow-100 text-yellow-800'
                               }`}>
                                 {consultation.status}

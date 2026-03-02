@@ -64,6 +64,45 @@ const consultationSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  detectedDisease: {
+    type: String,
+    default: ''
+  },
+  diseaseDescription: {
+    type: String,
+    default: ''
+  },
+  suggestedMedicines: [{
+    name: String,
+    dosage: String,
+    frequency: String,
+    duration: String
+  }],
+  aiInstructions: {
+    type: String,
+    default: ''
+  },
+  // Uploaded document/image
+  documentPath: {
+    type: String,
+    default: ''
+  },
+  documentOriginalName: {
+    type: String,
+    default: ''
+  },
+  documentMimeType: {
+    type: String,
+    default: ''
+  },
+  isEmergency: {
+    type: Boolean,
+    default: false
+  },
+  forwardedToExpert: {
+    type: Boolean,
+    default: false
+  },
   expertReview: {
     type: String,
     default: ''

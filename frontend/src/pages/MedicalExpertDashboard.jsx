@@ -19,7 +19,7 @@ api.interceptors.request.use((config) => {
 export default function MedicalExpertDashboard() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState('pending')
+  const [activeTab, setActiveTab] = useState('emergency')
   const [pendingConsultations, setPendingConsultations] = useState([])
   const [reviewedConsultations, setReviewedConsultations] = useState([])
   const [selectedConsultation, setSelectedConsultation] = useState(null)
@@ -45,10 +45,23 @@ export default function MedicalExpertDashboard() {
     try {
       setIsLoading(true)
       
-      // Load pending consultations
+      // Load pending consultations (including escalated)
       const pendingResponse = await api.get('/consultations/pending')
       const pendingData = pendingResponse.data.consultations || []
-      setPendingConsultations(pendingData.map(transformConsultation))
+
+      // Also load escalated consultations
+      let escalatedData = []
+      try {
+        const escalatedResponse = await api.get('/consultations?status=Escalated')
+        escalatedData = escalatedResponse.data.consultations || []
+      } catch (e) {
+        console.log('Could not load escalated:', e)
+      }
+
+      const allPending = [...pendingData, ...escalatedData]
+      // Remove duplicates by _id
+      const uniquePending = allPending.filter((v, i, a) => a.findIndex(t => t._id === v._id) === i)
+      setPendingConsultations(uniquePending.map(transformConsultation))
 
       // Load all consultations (to get reviewed ones)
       const allResponse = await api.get('/consultations?status=Reviewed')
@@ -66,6 +79,7 @@ export default function MedicalExpertDashboard() {
     id: c._id,
     consultationId: c.consultationId,
     patientId: c.patientId?._id,
+    patientDisplayId: c.patientId?.patientId,
     patientName: c.patientId?.name,
     patientAge: c.patientId?.age,
     patientGender: c.patientId?.gender,
@@ -78,6 +92,12 @@ export default function MedicalExpertDashboard() {
       : 'N/A',
     riskLevel: c.riskLevel,
     aiRecommendation: c.aiRecommendation,
+    detectedDisease: c.detectedDisease,
+    diseaseDescription: c.diseaseDescription,
+    suggestedMedicines: c.suggestedMedicines || [],
+    aiInstructions: c.aiInstructions,
+    isEmergency: c.isEmergency,
+    forwardedToExpert: c.forwardedToExpert,
     expertReview: c.expertReview,
     expertId: c.expertId,
     status: c.status,
@@ -161,6 +181,16 @@ export default function MedicalExpertDashboard() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex space-x-8">
             <button
+              onClick={() => setActiveTab('emergency')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'emergency'
+                  ? 'border-red-500 text-red-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              🚨 Emergency ({pendingConsultations.filter(c => c.isEmergency || c.riskLevel === 'High').length})
+            </button>
+            <button
               onClick={() => setActiveTab('pending')}
               className={`py-4 px-1 border-b-2 font-medium text-sm ${
                 activeTab === 'pending'
@@ -168,7 +198,7 @@ export default function MedicalExpertDashboard() {
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
-              Pending Reviews ({pendingConsultations.length})
+              Pending Reviews ({pendingConsultations.filter(c => !c.isEmergency && c.riskLevel !== 'High').length})
             </button>
             <button
               onClick={() => setActiveTab('reviewed')}
@@ -192,6 +222,78 @@ export default function MedicalExpertDashboard() {
           </div>
         ) : (
           <>
+            {/* Emergency Cases Tab */}
+            {activeTab === 'emergency' && (
+              <div>
+                {/* Emergency Alert Banner */}
+                {pendingConsultations.filter(c => c.isEmergency || c.riskLevel === 'High').length > 0 && (
+                  <div className="bg-red-600 text-white rounded-lg p-4 mb-6 animate-pulse">
+                    <div className="flex items-center gap-3">
+                      <span className="text-3xl">🚨</span>
+                      <div>
+                        <h3 className="text-xl font-bold">EMERGENCY CASES REQUIRE IMMEDIATE ATTENTION</h3>
+                        <p>{pendingConsultations.filter(c => c.isEmergency || c.riskLevel === 'High').length} patient(s) need urgent care</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  {pendingConsultations
+                    .filter(c => c.isEmergency || c.riskLevel === 'High')
+                    .map((consultation) => (
+                      <div key={consultation.id} className="bg-white rounded-lg shadow border-l-4 border-red-500 p-6">
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <div className="flex items-center gap-3 mb-2">
+                              <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-bold">🚨 HIGH RISK</span>
+                              <span className="bg-red-50 text-red-700 px-3 py-1 rounded-full text-sm font-medium">
+                                {consultation.detectedDisease || 'Emergency'}
+                              </span>
+                            </div>
+                            <h3 className="text-lg font-bold text-gray-900">{consultation.patientName}</h3>
+                            <p className="text-sm text-gray-600">
+                              Age: {consultation.patientAge} | Gender: {consultation.patientGender} | Contact: {consultation.patientContact}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => handleReviewClick(consultation)}
+                            className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition duration-300 font-bold"
+                          >
+                            Review Now
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 mt-3">
+                          <div className="bg-red-50 rounded p-3">
+                            <p className="text-sm font-semibold text-gray-700 mb-1">Symptoms:</p>
+                            <p className="text-sm text-gray-600">{consultation.symptoms}</p>
+                          </div>
+                          <div className="bg-red-50 rounded p-3">
+                            <p className="text-sm font-semibold text-gray-700 mb-1">Vitals:</p>
+                            <p className="text-sm text-gray-600">Temp: {consultation.temperature}°C | BP: {consultation.bloodPressure}</p>
+                          </div>
+                        </div>
+
+                        {consultation.aiInstructions && (
+                          <div className="bg-red-100 border border-red-300 rounded p-3 mt-3">
+                            <p className="text-sm font-semibold text-red-800">AI Emergency Instructions:</p>
+                            <p className="text-sm text-red-700">{consultation.aiInstructions}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                  {pendingConsultations.filter(c => c.isEmergency || c.riskLevel === 'High').length === 0 && (
+                    <div className="bg-white rounded-lg shadow p-12 text-center">
+                      <span className="text-4xl">✅</span>
+                      <p className="text-gray-500 mt-3 text-lg">No emergency cases at this time</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Pending Reviews Tab */}
             {activeTab === 'pending' && (
               <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -387,6 +489,15 @@ export default function MedicalExpertDashboard() {
             </div>
 
             <form onSubmit={handleSubmitReview} className="p-6 space-y-6">
+              {/* Emergency Banner in Modal */}
+              {selectedConsultation.isEmergency && (
+                <div className="bg-red-100 border-2 border-red-400 rounded-lg p-4">
+                  <p className="text-red-800 font-bold text-lg flex items-center gap-2">
+                    🚨 EMERGENCY CASE - {selectedConsultation.detectedDisease}
+                  </p>
+                </div>
+              )}
+
               {/* Patient Details */}
               <div className="bg-blue-50 rounded-lg p-4">
                 <h3 className="font-semibold text-gray-900 mb-2">Patient Details</h3>
@@ -405,6 +516,30 @@ export default function MedicalExpertDashboard() {
                   </div>
                 </div>
               </div>
+
+              {/* AI Detected Disease */}
+              {selectedConsultation.detectedDisease && (
+                <div className={`rounded-lg p-4 border-2 ${
+                  selectedConsultation.riskLevel === 'High' ? 'bg-red-50 border-red-300' :
+                  selectedConsultation.riskLevel === 'Medium' ? 'bg-yellow-50 border-yellow-300' :
+                  'bg-green-50 border-green-300'
+                }`}>
+                  <h3 className="font-semibold text-gray-900 mb-2">🤖 AI Diagnosis</h3>
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                      selectedConsultation.riskLevel === 'High' ? 'bg-red-200 text-red-900' :
+                      selectedConsultation.riskLevel === 'Medium' ? 'bg-yellow-200 text-yellow-900' :
+                      'bg-green-200 text-green-900'
+                    }`}>
+                      {selectedConsultation.riskLevel} Risk
+                    </span>
+                    <span className="font-bold text-gray-800">{selectedConsultation.detectedDisease}</span>
+                  </div>
+                  {selectedConsultation.diseaseDescription && (
+                    <p className="text-sm text-gray-600">{selectedConsultation.diseaseDescription}</p>
+                  )}
+                </div>
+              )}
 
               {/* Symptoms & Vitals */}
               <div className="grid grid-cols-2 gap-4">
@@ -426,10 +561,40 @@ export default function MedicalExpertDashboard() {
               {/* AI Recommendation */}
               <div>
                 <label className="block text-gray-700 font-semibold mb-2">AI Recommendation</label>
-                <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-gray-700">
+                <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-gray-700 whitespace-pre-line">
                   {selectedConsultation.aiRecommendation || 'No AI recommendation'}
                 </div>
               </div>
+
+              {/* AI Suggested Medicines */}
+              {selectedConsultation.suggestedMedicines && selectedConsultation.suggestedMedicines.length > 0 && (
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-2">💊 AI Suggested Medicines</label>
+                  <div className="bg-blue-50 border border-blue-200 rounded p-3 space-y-2">
+                    {selectedConsultation.suggestedMedicines.map((med, index) => (
+                      <div key={index} className="text-sm text-blue-800 border-b border-blue-100 pb-1 last:border-0">
+                        <span className="font-medium">{med.name}</span>
+                        {med.dosage && <span> - {med.dosage}</span>}
+                        {med.frequency && <span> | {med.frequency}</span>}
+                        {med.duration && <span> | {med.duration}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* AI Instructions */}
+              {selectedConsultation.aiInstructions && (
+                <div>
+                  <label className="block text-gray-700 font-semibold mb-2">📋 AI Instructions</label>
+                  <div className={`border rounded p-3 text-sm ${
+                    selectedConsultation.riskLevel === 'High' ? 'bg-red-50 border-red-200 text-red-700' :
+                    'bg-gray-50 border-gray-200 text-gray-700'
+                  }`}>
+                    {selectedConsultation.aiInstructions}
+                  </div>
+                </div>
+              )}
 
               {/* Expert Review Input */}
               <div>
